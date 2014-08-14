@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="project" default="build-update-site">
+	<taskdef resource="net/sf/antcontrib/antlib.xml"
+	         classpath="${basedir}/libs/ant-contrib-1.0b3.jar" />
+	<taskdef name="xmltask"
+	         classname="com.oopsconsultancy.xmltask.ant.XmlTask"
+	         classpath="${basedir}/libs/xmltask.jar" />
+
+	<property name="workspace" location="${ant.file}/../.." />
+	<property name="project" location="${ant.file}/.." />
+
+	<property name="build" location="${project}/build" />
+	<property name="build-feature-and-plugins"
+	          location="${build}/featureAndPlugins" />
+	<property name="build-repository" location="" />
+
+	<property name="repository-name" value="Jeeeyul’s Eclipse Update Site" />
+	<property name="category-file" value="category.xml" />
+	<property name="feature-id" value="" />
+
+	<loadproperties srcfile="${project}/sign.properties" />
+
+	<scriptdef name="update-plugin-version"
+	           language="javascript"
+	           src="${basedir}/scripts/update-version.js">
+		<attribute name="version" />
+		<attribute name="plugin" />
+		<attribute name="dependencies" />
+	</scriptdef>
+
+	<scriptdef name="append-property"
+	           language="javascript"
+	           src="${basedir}/scripts/append-property.js">
+		<attribute name="property" />
+		<attribute name="value" />
+	</scriptdef>
+
+	<target name="build-feature-and-plugins"
+	        depends="clean, generate-scripts"
+	        description="build feature and plugins, and signing them.">
+
+		<echo>Executing scripts</echo>
+		<ant antfile="${workspace}/${feature-id}/build.xml" inheritall="false">
+			<property name="compilerArg" value="-encoding UTF8" />
+			<property name="javacSource" value="1.6" />
+			<property name="javacTarget" value="1.6" />
+			<property name="buildDirectory" value="temp-build" />
+			<property name="feature.destination"
+			          location="${build-feature-and-plugins}/features" />
+			<property name="plugin.destination"
+			          location="${build-feature-and-plugins}/plugins" />
+		</ant>
+
+		<echo>signing...</echo>
+		<foreach target="signjar" param="file">
+			<path>
+				<fileset dir="${build-feature-and-plugins}"
+				         includes="**/*.jar" />
+			</path>
+		</foreach>
+
+		<antcall target="clean-generated-script" />
+
+		<eclipse.convertPath fileSystemPath="${project}"
+		                     property="resourcePath" />
+		<eclipse.refreshLocal resource="${resourcePath}" depth="infinite" />
+	</target>
+
+	<target name="clean" description="Cleans feature and plugins build result.">
+		<echo>Cleaning previous build.</echo>
+		<delete dir="${build-feature-and-plugins}"
+		        includes="**/*"
+		        includeemptydirs="true" />
+	</target>
+
+	<target name="clean-generated-script"
+	        description="Deletes generated ant script for plugin and feature build.">
+		<echo>Cleaning generated scripts.</echo>
+		<delete includeemptydirs="true">
+			<fileset dir="${workspace}">
+				<include name="*/build.xml" />
+				<include name="*/javaCompiler...args" />
+				<include name="*/@dot/**/*" />
+				<include name="*/temp-build/**/*" />
+				<include name="*/${buildDirectory}/**/*" />
+				<include name="*/temp-build" />
+				<include name="*/@dot.log" />
+				<include name="*/@dot" />
+				<include name="*/compilation.problem" />
+				<include name="assemble.*.xml" />
+				<include name="package.*.xml" />
+			</fileset>
+		</delete>
+	</target>
+
+	<target name="build-update-site"
+	        depends="build-feature-and-plugins"
+	        description="Generate or append feature and plugins into repository.">
+		<eclipse.publish.featuresAndBundles repository="file:${build-repository}"
+		                                    metadatarepositoryname="${repository-name}"
+		                                    artifactrepositoryname="${repository-name}"
+		                                    category="file:${basedir}/${category-file}">
+			<features dir="${build-feature-and-plugins}/features"
+			          includes="*.jar" />
+			<bundles dir="${build-feature-and-plugins}/plugins"
+			         includes="*.jar" />
+		</eclipse.publish.featuresAndBundles>
+
+		<!-- FIX eclipse.publish.featuresAndBundles bug, It doesn't honor repository name -->
+		<xmltask source="${build-repository}/artifacts.xml"
+		         dest="${build-repository}/artifacts.xml">
+			<replace path="/repository/@name" withText="${repository-name}" />
+		</xmltask>
+		<xmltask source="${build-repository}/content.xml"
+		         dest="${build-repository}/content.xml">
+			<replace path="/repository/@name" withText="${repository-name}" />
+		</xmltask>
+
+		<jar destfile="${build-repository}/artifacts.jar">
+			<fileset dir="${build-repository}" includes="artifacts.xml" />
+		</jar>
+		<jar destfile="${build-repository}/content.jar">
+			<fileset dir="${build-repository}" includes="content.xml" />
+		</jar>
+		<delete dir="${build-repository}" includes="*.xml" />
+
+		<!-- Sign repository -->
+		<foreach target="signjar" param="file">
+			<path>
+				<fileset dir="${build-repository}" includes="*.jar" />
+			</path>
+		</foreach>
+
+		<eclipse.convertPath fileSystemPath="${build-repository}}"
+		                     property="resourcePath" />
+		<eclipse.refreshLocal resource="${resourcePath}" depth="infinite" />
+	</target>
+
+
+	<target name="generate-scripts"
+	        depends="set-timestamp, update-plugin-versions"
+	        description="Generates ant scripts to build feature and plugins.">
+		<echo>Generating ant scripts.</echo>
+		<eclipse.buildScript elements="feature@${feature-id}"
+		                     forceContextQualifier="${timestamp}"
+		                     baselocation="${eclipse.home}"
+		                     builddirectory="${workspace}" />
+		<echo>${basedir}/build</echo>
+	</target>
+
+	<target name="set-timestamp"
+	        description="define a 'timestamp' property to use as qualifier.">
+		<echo>${build-repository}</echo>
+		<tstamp>
+			<format property="timestamp"
+			        pattern="'I'yyyyMMdd-HHmmss"
+			        locale="ko,KR" />
+		</tstamp>
+	</target>
+
+	<target name="signjar"
+	        description="Signs given ${file} if keystore exists.">
+		<available file="${keystore}" property="keystore.exists" />
+		<if>
+			<equals arg1="${keystore.exists}" arg2="true" />
+			<then>
+				<signjar jar="${file}"
+				         alias="${alias}"
+				         keystore="${keystore}"
+				         keypass="${keypass}"
+				         storepass="${storepass}"
+				         digestalg="SHA1"
+				         sigalg="SHA1withDSA" />
+			</then>
+		</if>
+	</target>
+
+	<target name="collect-plugin-id-list">
+		<xmltask source="${workspace}/${feature-id}/feature.xml">
+			<call path="feature/plugin">
+				<param name="id" path="@id" />
+				<actions>
+					<append-property property="plugin-id-list" value="@{id}" />
+				</actions>
+			</call>
+		</xmltask>
+	</target>
+
+	<target name="update-plugin-versions" depends="collect-plugin-id-list">
+		<for param="each" list="${plugin-id-list}">
+			<sequential>
+				<update-plugin-version version="${version}"
+				                       plugin="${workspace}/@{each}"
+				                       dependencies="${plugin-id-list}" />
+			</sequential>
+		</for>
+		<for param="each" list="${plugin-id-list}">
+			<sequential>
+				<eclipse.refreshLocal resource="/@{each}/META-INF/MANIFEST.MF" />
+			</sequential>
+		</for>
+		<xmltask source="${workspace}/${feature-id}/feature.xml"
+		         dest="${workspace}/${feature-id}/feature.xml">
+			<replace path="/feature/@version" withText="${version}.qualifier" />
+		</xmltask>
+		<eclipse.refreshLocal resource="${workspace}/${feature-id}/feature.xml" />
+	</target>
+
+</project>
